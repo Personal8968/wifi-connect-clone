@@ -45,7 +45,7 @@ jobs:
 
   release:
     needs: build
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/fix/semantic-release') || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
 
     steps:
@@ -71,4 +71,8 @@ jobs:
       - name: Run semantic-release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx --package @semantic-release/changelog --package @semantic-release/exec semantic-release --no-ci --plugins "@semantic-release/changelog,@semantic-release/exec"
+        run: |
+          npx --package @semantic-release/changelog \
+              --package @semantic-release/exec \
+              --package @semantic-release/git \
+              semantic-release --no-ci
