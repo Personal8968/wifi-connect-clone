@@ -6,7 +6,8 @@ use std::sync::mpsc::{Receiver, Sender};
 use iron::modifiers::Redirect;
 use iron::prelude::*;
 use iron::{
-    headers, status, typemap, AfterMiddleware, Iron, IronError, IronResult, Request, Response, Url,
+    headers, status, typemap, AfterMiddleware, AroundMiddleware, Handler, Iron, IronError,
+    IronResult, Request, Response, Url,
 };
 use iron_cors::CorsMiddleware;
 use mount::Mount;
@@ -23,6 +24,7 @@ use network::{NetworkCommand, NetworkCommandResponse};
 
 struct RequestSharedState {
     gateway: Ipv4Addr,
+    portal: Option<String>,
     server_rx: Receiver<NetworkCommandResponse>,
     network_tx: Sender<NetworkCommand>,
     exit_tx: Sender<ExitResult>,
@@ -111,18 +113,61 @@ where
     ))
 }
 
+struct RequestLogger;
+
+struct RequestLoggerMiddleware {
+    handler: Box<dyn Handler>,
+}
+
+impl Handler for RequestLoggerMiddleware {
+    fn handle(&self, req: &mut Request) -> IronResult<Response> {
+        let method = req.method.clone();
+        let url = req.url.clone();
+
+        let result = self.handler.handle(req);
+
+        match &result {
+            Ok(res) => info!("Request: {} {} -> {:?}", method, url, res.status),
+            Err(err) => info!("Request: {} {} -> {:?}", method, url, err.response.status),
+        }
+
+        result
+    }
+}
+
+impl AroundMiddleware for RequestLogger {
+    fn around(self, handler: Box<dyn Handler>) -> Box<dyn Handler> {
+        Box::new(RequestLoggerMiddleware { handler })
+    }
+}
+
 struct RedirectMiddleware;
 
 impl AfterMiddleware for RedirectMiddleware {
     fn catch(&self, req: &mut Request, err: IronError) -> IronResult<Response> {
-        let gateway = {
+        let (redirect_url, gateway_host, portal_host) = {
             let request_state = get_request_state!(req);
-            format!("{}", request_state.gateway)
+            let redirect_url = request_state
+                .portal
+                .clone()
+                .unwrap_or_else(|| format!("http://{}/", request_state.gateway));
+            let portal_host = request_state.portal.as_ref().map(|p| {
+                p.trim_start_matches("http://")
+                    .trim_start_matches("https://")
+                    .split('/')
+                    .next()
+                    .unwrap_or("")
+                    .to_string()
+            });
+            let gateway_host = format!("{}", request_state.gateway);
+            (redirect_url, gateway_host, portal_host)
         };
 
         if let Some(host) = req.headers.get::<headers::Host>() {
-            if host.hostname != gateway {
-                let url = Url::parse(&format!("http://{}/", gateway)).unwrap();
+            let is_local = host.hostname == gateway_host;
+            let is_portal = portal_host.as_ref().map_or(false, |p| host.hostname == *p);
+            if !is_local && !is_portal {
+                let url = Url::parse(&redirect_url).unwrap();
                 return Ok(Response::with((status::Found, Redirect(url))));
             }
         }
@@ -134,6 +179,7 @@ impl AfterMiddleware for RedirectMiddleware {
 pub fn start_server(
     gateway: Ipv4Addr,
     listening_port: u16,
+    portal: Option<String>,
     server_rx: Receiver<NetworkCommandResponse>,
     network_tx: Sender<NetworkCommand>,
     exit_tx: Sender<ExitResult>,
@@ -143,12 +189,14 @@ pub fn start_server(
     let gateway_clone = gateway;
     let request_state = RequestSharedState {
         gateway,
+        portal,
         server_rx,
         network_tx,
         exit_tx,
     };
 
     let mut router = Router::new();
+    router.get("/generate_204", generate_204, "generate_204");
     router.get("/", Static::new(ui_directory), "index");
     router.get("/networks", networks, "networks");
     router.post("/connect", connect, "connect");
@@ -166,6 +214,7 @@ pub fn start_server(
     chain.link(Write::<RequestSharedState>::both(request_state));
     chain.link_after(RedirectMiddleware);
     chain.link_around(cors_middleware);
+    chain.link_around(RequestLogger);
 
     let address = format!("{}:{}", gateway_clone, listening_port);
 
@@ -177,6 +226,10 @@ pub fn start_server(
             ErrorKind::StartHTTPServer(address, e.to_string()).into(),
         );
     }
+}
+
+fn generate_204(_req: &mut Request) -> IronResult<Response> {
+    Ok(Response::with(status::NoContent))
 }
 
 fn networks(req: &mut Request) -> IronResult<Response> {

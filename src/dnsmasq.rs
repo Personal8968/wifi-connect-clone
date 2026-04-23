@@ -10,7 +10,13 @@ pub fn start_dnsmasq(config: &Config, device: &Device) -> Result<Child> {
         &format!("--address=/#/{}", config.gateway),
         &format!("--dhcp-range={}", config.dhcp_range),
         &format!("--dhcp-option=option:router,{}", config.gateway),
-        &format!("--dhcp-option=114,http://{}:{}/", config.gateway, config.listening_port),
+        &format!(
+            "--dhcp-option=114,{}",
+            config.portal.as_ref().map_or_else(
+                || format!("http://{}:{}/", config.gateway, config.listening_port),
+                |url| url.clone(),
+            )
+        ),
         &format!("--interface={}", device.interface()),
         "--keep-in-foreground",
         "--bind-interfaces",

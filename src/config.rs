@@ -23,6 +23,7 @@ pub struct Config {
     pub listening_port: u16,
     pub activity_timeout: u64,
     pub ui_directory: PathBuf,
+    pub portal: Option<String>,
 }
 
 pub fn get_config() -> Config {
@@ -66,6 +67,14 @@ pub fn get_config() -> Config {
                     "Gateway of the captive portal WiFi network (default: {})",
                     DEFAULT_GATEWAY
                 ))
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("portal-url")
+                .short("c")
+                .long("portal-url")
+                .value_name("url")
+                .help("Custom captive portal URL for DHCP option 114 (default: http://<gateway>:<port>/)")
                 .takes_value(true),
         )
         .arg(
@@ -126,6 +135,11 @@ pub fn get_config() -> Config {
         |v| Some(v.to_string()),
     );
 
+    let portal: Option<String> = matches.value_of("portal-url").map_or_else(
+        || env::var("PORTAL_URL").ok(),
+        |v| Some(v.to_string()),
+    );
+
     let gateway = Ipv4Addr::from_str(&matches.value_of("portal-gateway").map_or_else(
         || env::var("PORTAL_GATEWAY").unwrap_or_else(|_| DEFAULT_GATEWAY.to_string()),
         String::from,
@@ -166,6 +180,7 @@ pub fn get_config() -> Config {
         listening_port,
         activity_timeout,
         ui_directory,
+        portal,
     }
 }
 
