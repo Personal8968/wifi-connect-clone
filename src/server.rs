@@ -167,6 +167,7 @@ pub fn start_server(
     };
 
     let mut router = Router::new();
+    router.get("/generate_204", generate_204, "generate_204");
     router.get("/", Static::new(ui_directory), "index");
     router.get("/networks", networks, "networks");
     router.post("/connect", connect, "connect");
@@ -195,6 +196,10 @@ pub fn start_server(
             ErrorKind::StartHTTPServer(address, e.to_string()).into(),
         );
     }
+}
+
+fn generate_204(_req: &mut Request) -> IronResult<Response> {
+    Ok(Response::with(status::NoContent))
 }
 
 fn networks(req: &mut Request) -> IronResult<Response> {
