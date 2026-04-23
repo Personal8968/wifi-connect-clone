@@ -96,6 +96,7 @@ impl NetworkCommandHandler {
     ) {
         let gateway = config.gateway;
         let listening_port = config.listening_port;
+        let portal = config.portal.clone();
         let exit_tx_server = exit_tx.clone();
         let ui_directory = config.ui_directory.clone();
 
@@ -103,6 +104,7 @@ impl NetworkCommandHandler {
             start_server(
                 gateway,
                 listening_port,
+                portal,
                 server_rx,
                 network_tx,
                 exit_tx_server,

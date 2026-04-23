@@ -23,6 +23,7 @@ use network::{NetworkCommand, NetworkCommandResponse};
 
 struct RequestSharedState {
     gateway: Ipv4Addr,
+    portal: Option<String>,
     server_rx: Receiver<NetworkCommandResponse>,
     network_tx: Sender<NetworkCommand>,
     exit_tx: Sender<ExitResult>,
@@ -115,14 +116,29 @@ struct RedirectMiddleware;
 
 impl AfterMiddleware for RedirectMiddleware {
     fn catch(&self, req: &mut Request, err: IronError) -> IronResult<Response> {
-        let gateway = {
+        let (redirect_url, gateway_host, portal_host) = {
             let request_state = get_request_state!(req);
-            format!("{}", request_state.gateway)
+            let redirect_url = request_state
+                .portal
+                .clone()
+                .unwrap_or_else(|| format!("http://{}/", request_state.gateway));
+            let portal_host = request_state.portal.as_ref().map(|p| {
+                p.trim_start_matches("http://")
+                    .trim_start_matches("https://")
+                    .split('/')
+                    .next()
+                    .unwrap_or("")
+                    .to_string()
+            });
+            let gateway_host = format!("{}", request_state.gateway);
+            (redirect_url, gateway_host, portal_host)
         };
 
         if let Some(host) = req.headers.get::<headers::Host>() {
-            if host.hostname != gateway {
-                let url = Url::parse(&format!("http://{}/", gateway)).unwrap();
+            let is_local = host.hostname == gateway_host;
+            let is_portal = portal_host.as_ref().map_or(false, |p| host.hostname == *p);
+            if !is_local && !is_portal {
+                let url = Url::parse(&redirect_url).unwrap();
                 return Ok(Response::with((status::Found, Redirect(url))));
             }
         }
@@ -134,6 +150,7 @@ impl AfterMiddleware for RedirectMiddleware {
 pub fn start_server(
     gateway: Ipv4Addr,
     listening_port: u16,
+    portal: Option<String>,
     server_rx: Receiver<NetworkCommandResponse>,
     network_tx: Sender<NetworkCommand>,
     exit_tx: Sender<ExitResult>,
@@ -143,6 +160,7 @@ pub fn start_server(
     let gateway_clone = gateway;
     let request_state = RequestSharedState {
         gateway,
+        portal,
         server_rx,
         network_tx,
         exit_tx,
