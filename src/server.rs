@@ -6,7 +6,8 @@ use std::sync::mpsc::{Receiver, Sender};
 use iron::modifiers::Redirect;
 use iron::prelude::*;
 use iron::{
-    headers, status, typemap, AfterMiddleware, Iron, IronError, IronResult, Request, Response, Url,
+    headers, status, typemap, AfterMiddleware, AroundMiddleware, Handler, Iron, IronError,
+    IronResult, Request, Response, Url,
 };
 use iron_cors::CorsMiddleware;
 use mount::Mount;
@@ -112,6 +113,34 @@ where
     ))
 }
 
+struct RequestLogger;
+
+struct RequestLoggerMiddleware {
+    handler: Box<dyn Handler>,
+}
+
+impl Handler for RequestLoggerMiddleware {
+    fn handle(&self, req: &mut Request) -> IronResult<Response> {
+        let method = req.method.clone();
+        let url = req.url.clone();
+
+        let result = self.handler.handle(req);
+
+        match &result {
+            Ok(res) => info!("Request: {} {} -> {:?}", method, url, res.status),
+            Err(err) => info!("Request: {} {} -> {:?}", method, url, err.response.status),
+        }
+
+        result
+    }
+}
+
+impl AroundMiddleware for RequestLogger {
+    fn around(self, handler: Box<dyn Handler>) -> Box<dyn Handler> {
+        Box::new(RequestLoggerMiddleware { handler })
+    }
+}
+
 struct RedirectMiddleware;
 
 impl AfterMiddleware for RedirectMiddleware {
@@ -185,6 +214,7 @@ pub fn start_server(
     chain.link(Write::<RequestSharedState>::both(request_state));
     chain.link_after(RedirectMiddleware);
     chain.link_around(cors_middleware);
+    chain.link_around(RequestLogger);
 
     let address = format!("{}:{}", gateway_clone, listening_port);
 
